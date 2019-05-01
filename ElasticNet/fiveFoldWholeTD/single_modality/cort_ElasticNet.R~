@@ -189,8 +189,12 @@ for (i in 1:5) {
 	x_test_df <- get(paste0("x_td_test_F_", i))
 	y_test_df <- get(paste0("y_td_test_F_", i))
 	y_test_predicted <- predict(elastic_net_model, x_test_df)
-	if (i == 1) { predicted_values <- merge(cbind(x_test_df, y_test_predicted), y_test_df)
-	} else { predicted_values <- rbind(predicted_values, merge(cbind(x_test_df, y_test_predicted), y_test_df))
+	if (i == 1) { 
+		predicted_values <- merge(cbind(x_test_df, y_test_predicted), y_test_df)
+		coefs <- coef(elastic_net_model$finalModel, s = elastic_net_model$bestTune$lambda)# Added March 11, 2019
+	} else { 
+		predicted_values <- rbind(predicted_values, merge(cbind(x_test_df, y_test_predicted), y_test_df))
+		coefs <- cbind(coefs, coef(elastic_net_model$finalModel, s = elastic_net_model$bestTune$lambda))# Added March 11, 2019
 	}
 }
 names(predicted_values)[names(predicted_values) == 'y_test_predicted'] <- 'predicted_ageAtScan1'
@@ -202,6 +206,10 @@ ageAtScan1 <- td_F[,yvar]
 train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
 elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
 				preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
+coefs <- cbind(coefs, coef(elastic_net_model$finalModel, s = elastic_net_model$bestTune$lambda)) # Added March 11, 2019
+coefs <- as.matrix(coefs) # Added March 11, 2019
+coefs <- data.frame(coefs) # Added March 11, 2019
+colnames(coefs) <- c("First_Fold", "Second_Fold", "Third_Fold", "Fourth_Fold", "Fifth_Fold", "Whole_Sample") # Added March 11, 2019
 
 # predict on PS's
 x_ps_F <- df_F[df_F$psTerminal == "PS", c("bblid", xvars)]
@@ -215,6 +223,9 @@ y_ps_predicted <- predict(elastic_net_model, x_ps_input)
 df_td_F <- predicted_values
 df_ps_F <- merge(x_ps_F, y_ps_F)
 df_ps_F$predicted_ageAtScan1 <- y_ps_predicted
+
+# get predictions for PSs based on five models for TDs # Added March 11, 2019
+
 
 # Create years age variables
 df_ps_F$real_age <- df_ps_F$ageAtScan1/12
@@ -304,8 +315,8 @@ substring_F <- paste0("TD: r = ", td_corr_F, ", p < ", td_p_F,", N = ", td_N_F, 
 
 # Plots
 real_pred_F <- ggplot(data=df_both_F, aes(real_age, pred_age, color=diagnosis)) +
-	geom_point(shape = 16, size = 3, show.legend = TRUE) + theme_minimal() +
-	xlim(5,25) + ylim(5,25) + geom_abline() +
+	geom_point(shape = 16, size = 2, show.legend = TRUE, alpha=.4) + theme_minimal() +
+	xlim(0,25) + ylim(0,25) + geom_abline() +
 	labs(title = "Female (Elastic 5-Fold): Cortical Thickness ROIs", subtitle = substring_F) + 
 	xlab("Real Age") + ylab("Predicted Age") + geom_smooth(se = TRUE, method = "lm") +
 	theme(plot.title = element_text(family="Times", face="bold", size=18)) 
@@ -476,8 +487,8 @@ substring_M <- paste0("TD: r = ", td_corr_M, ", p < ", td_p_M,", N = ", td_N_M, 
 
 # Plots
 real_pred_M <- ggplot(data=df_both_M, aes(real_age, pred_age, color=diagnosis)) +
-	geom_point(shape = 16, size = 3, show.legend = TRUE) + theme_minimal() +
-	xlim(5,25) + ylim(5,25) + geom_abline() +
+	geom_point(shape = 16, size = 2, show.legend = TRUE, alpha=.4) + theme_minimal() +
+	xlim(0,25) + ylim(0,25) + geom_abline() +
 	labs(title = "Male (Elastic 5-Fold): Cortical Thickness ROIs", subtitle = substring_M) + 
 	xlab("Real Age") + ylab("Predicted Age") + geom_smooth(se = TRUE, method = "lm") +
 	theme(plot.title = element_text(family="Times", face="bold", size=18)) 
@@ -494,7 +505,6 @@ pdf(file="/home/butellyn/age_prediction/plots/cort_fiveFoldWholeTD_ElasticNet.pd
 grid.arrange(real_pred_F, real_pred_M, ncol=2)
 grid.arrange(bar_F, bar_M, ncol=2)
 dev.off()
-
 
 
 

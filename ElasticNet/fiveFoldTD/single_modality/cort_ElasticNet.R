@@ -447,22 +447,6 @@ for (i in 1:5) {
 		df_ps_M <- rbind(df_ps_M, merge(cbind(x_ps_test_df, y_ps_test_predicted), y_ps_test_df))
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 names(df_td_M)[names(df_td_M) == 'y_td_test_predicted'] <- 'predicted_ageAtScan1'
 names(df_ps_M)[names(df_ps_M) == 'y_ps_test_predicted'] <- 'predicted_ageAtScan1'
 

@@ -5,7 +5,7 @@
 ### spectrum symptoms (PS's) obtain their predicted age from a model built on all of the TD's.
 ###
 ### Ellyn Butler
-### February 26, 2019 - present
+### March 8, 2019 - present
 
 
 # Load libraries
@@ -161,12 +161,11 @@ for (i in 1:ncol(df_F)) {
 td_F <- df_F[df_F$psTerminal == "TD",]
 rownames(td_F) <- 1:nrow(td_F)
 
-# TD folds
-folds5_TD <- createFolds(td_F$ageAtScan1, k = 5, list = TRUE)
+folds5 <- createFolds(td_F$ageAtScan1, k = 5, list = TRUE)
 
 for (i in 1:5) {
-	test <- folds5_TD[[i]]
-	trainfolds <- subset(folds5_TD,!(grepl(i, names(folds5_TD))))
+	test <- folds5[[i]]
+	trainfolds <- subset(folds5,!(grepl(i, names(folds5))))
 	train <- c()
 	for (j in 1:4) { train <- c(train, trainfolds[[j]]) }
 	assign(paste0("x_td_train_F_", i), td_F[train, c("bblid", xvars)])
@@ -175,53 +174,59 @@ for (i in 1:5) {
 	assign(paste0("y_td_test_F_", i), td_F[test, c("bblid", yvar)])
 }
 
-# PS folds
-ps_F <- df_F[df_F$psTerminal == "PS",]
-rownames(ps_F) <- 1:nrow(ps_F)
-folds5_PS <- createFolds(ps_F$ageAtScan1, k = 5, list = TRUE)
-
+#####Elastic Net: out of sample predictions for TD's
 for (i in 1:5) {
-	test <- folds5_PS[[i]]
-	trainfolds <- subset(folds5_PS,!(grepl(i, names(folds5_PS))))
-	train <- c()
-	for (j in 1:4) { train <- c(train, trainfolds[[j]]) }
-	assign(paste0("x_ps_train_F_", i), ps_F[train, c("bblid", xvars)])
-	assign(paste0("x_ps_test_F_", i), ps_F[test, c("bblid", xvars)])
-	assign(paste0("y_ps_train_F_", i), ps_F[train, c("bblid", yvar)])
-	assign(paste0("y_ps_test_F_", i), ps_F[test, c("bblid", yvar)])
-}
-
-
-#####Elastic Net: out of sample predictions for TD's, and 1/5 each iteration for PS's
-for (i in 1:5) {
-	x_td_train_df <- get(paste0("x_td_train_F_", i))
-	x_td_train_input <- x_td_train_df[,xvars]
-	y_td_train_df <- get(paste0("y_td_train_F_", i))
-	y_td_train_input <- y_td_train_df$ageAtScan1
-	ageAtScan1 <- y_td_train_input
-	train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
-	elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
-				preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
+	x_train_df <- get(paste0("x_td_train_F_", i))
+	x_train_input <- x_train_df[,xvars]
+	y_train_df <- get(paste0("y_td_train_F_", i))
+	y_train_input <- y_train_df$ageAtScan1
+	ageAtScan1 <- y_train_input
+	#1) train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
+	#2) train_control <- trainControl(method = "cv")
+	#1) elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_train_input), method = "glmnet", 
+				#preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
 				# just used parameters from here: https://www.datacamp.com/community/tutorials/tutorial-ridge-lasso-elastic-net
+	#2) elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_train_input), method = "glmnet", 
+				#preProcess = c("center", "scale"), trControl = train_control) 
+	elastic_net_model <- cv.glmnet(as.matrix(x_train_input), ageAtScan1, alpha = 0)
+	bestlam <- elastic_net_model$lambda.min
 	assign(paste0("mod_td_F_", i), elastic_net_model)
-	# td predicted values
-	x_td_test_df <- get(paste0("x_td_test_F_", i))
-	y_td_test_df <- get(paste0("y_td_test_F_", i))
-	y_td_test_predicted <- predict(elastic_net_model, x_td_test_df)
-	# ps predicted values
-	x_ps_test_df <- get(paste0("x_ps_test_F_", i))
-	y_ps_test_df <- get(paste0("y_ps_test_F_", i))
-	y_ps_test_predicted <- predict(elastic_net_model, x_ps_test_df)
+	x_test_df <- get(paste0("x_td_test_F_", i))
+	y_test_df <- get(paste0("y_td_test_F_", i))
+	y_test_predicted <- predict(elastic_net_model, s=bestlam, newx=as.matrix(x_test_df[,xvars]))
 	if (i == 1) { 
-		df_td_F <- merge(cbind(x_td_test_df, y_td_test_predicted), y_td_test_df)
-		df_ps_F <- merge(cbind(x_ps_test_df, y_ps_test_predicted), y_ps_test_df)
+		x_test_df$predicted_ageAtScan1 <- y_test_predicted
+		predicted_values <- merge(x_test_df, y_test_df)
 	} else { 
-		df_td_F <- rbind(df_td_F, merge(cbind(x_td_test_df, y_td_test_predicted), y_td_test_df))
-		df_ps_F <- rbind(df_ps_F, merge(cbind(x_ps_test_df, y_ps_test_predicted), y_ps_test_df))
+		x_test_df$predicted_ageAtScan1 <- y_test_predicted
+		predicted_values <- rbind(predicted_values, merge(x_test_df, y_test_df))
 	}
 }
-names(df_td_F)[names(df_td_F) == 'y_td_test_predicted'] <- 'predicted_ageAtScan1'
-names(df_ps_F)[names(df_ps_F) == 'y_ps_test_predicted'] <- 'predicted_ageAtScan1'
+
+#####Elastic Net: predictions for PS's 
+# train on full TD set
+x_td_train_input <- td_F[,xvars]
+ageAtScan1 <- td_F[,yvar]
+#1) train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
+#2) train_control <- trainControl(method = "cv")
+#1) elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
+				#preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
+#2) elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
+				#preProcess = c("center", "scale"), trControl = train_control) 
+elastic_net_model <- cv.glmnet(as.matrix(x_td_train_input), ageAtScan1, alpha = 0)
+
+# predict on PS's
+x_ps_F <- df_F[df_F$psTerminal == "PS", c("bblid", xvars)]
+y_ps_F <- df_F[df_F$psTerminal == "PS", c("bblid", yvar)]
+x_ps_input <- x_ps_F[,xvars]
+y_ps_input <- y_ps_F[,yvar]
+ageAtScan1 <- y_ps_input
+y_ps_predicted <- predict(elastic_net_model, s=bestlam, newx=as.matrix(x_ps_input[,xvars])) 
+
+# create final dfs
+df_td_F <- predicted_values
+df_ps_F <- merge(x_ps_F, y_ps_F)
+df_ps_F$predicted_ageAtScan1 <- y_ps_predicted
 
 # Create years age variables
 df_ps_F$real_age <- df_ps_F$ageAtScan1/12
@@ -295,49 +300,6 @@ summary_F$N <- c(N_TD_8_9, N_PS_8_9, N_TD_10_11, N_PS_10_11, N_TD_12_13, N_PS_12
 
 summary_F$Age_Category <- factor(summary_F$Age_Category, levels = c("8_9", "10_11", "12_13", "14_15", "16_17", "18_19", "20_23"))
 
-# Three-year age bins
-df_both_F$age_cat_3 <- 0
-
-for (row in 1:nrow(df_both_F)) {
-	if (df_both_F[row,"real_age"] < 12) { df_both_F[row,"age_cat_3"] = "8_11" }
-	else if (df_both_F[row,"real_age"] >= 12 & df_both_F[row,"real_age"] < 15) { df_both_F[row,"age_cat_3"] = "12_14" }
-	else if (df_both_F[row,"real_age"] >= 15 & df_both_F[row,"real_age"] < 18) { df_both_F[row,"age_cat_3"] = "15_17" }
-	else if (df_both_F[row,"real_age"] >= 18 & df_both_F[row,"real_age"] < 21) { df_both_F[row,"age_cat_3"] = "18_20" }
-	else if (df_both_F[row,"real_age"] >= 21 & df_both_F[row,"real_age"] < 24) { df_both_F[row,"age_cat_3"] = "21_23" }
-}
-
-df_both_F$age_cat_3 <- as.factor(df_both_F$age_cat_3)
-summary_3_F <- data.frame(matrix(0, nrow=10, ncol=4))
-colnames(summary_3_F) <- c("Age_Category", "Diagnosis", "Percent_Pred_Adult", "N")
-summary_3_F$Age_Category <- c("8_11", "8_11", "12_14", "12_14", "15_17", "15_17", "18_20", "18_20", "21_23", "21_23")
-summary_3_F$Diagnosis <- c("TD", "PS", "TD", "PS", "TD", "PS", "TD", "PS", "TD", "PS")
-
-TD_8_11 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-PS_8_11 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-TD_12_14 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-PS_12_14 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-TD_15_17 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-PS_15_17 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-TD_18_20 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-PS_18_20 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-TD_21_23 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-PS_21_23 <- 100*(length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"])/length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-summary_3_F$Percent_Pred_Adult <- c(TD_8_11, PS_8_11, TD_12_14, PS_12_14, TD_15_17, PS_15_17, TD_18_20, PS_18_20, TD_21_23, PS_21_23)
-
-N_TD_8_11 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-N_PS_8_11 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "8_11" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-N_TD_12_14 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-N_PS_12_14 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "12_14" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-N_TD_15_17 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-N_PS_15_17 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "15_17" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-N_TD_18_20 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-N_PS_18_20 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "18_20" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-N_TD_21_23 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "TD" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "TD", "age_cat_3"]))
-N_PS_21_23 <- paste0(length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "PS" & df_both_F$pred_adult == 1, "age_cat_3"]),"/",length(df_both_F[df_both_F$age_cat_3 == "21_23" & df_both_F$diagnosis == "PS", "age_cat_3"]))
-summary_3_F$N <- c(N_TD_8_11, N_PS_8_11, N_TD_12_14, N_PS_12_14, N_TD_15_17, N_PS_15_17, N_TD_18_20, N_PS_18_20, N_TD_21_23, N_PS_21_23)
-
-
-summary_3_F$Age_Category <- factor(summary_3_F$Age_Category, levels = c("8_11", "12_14", "15_17", "18_20", "21_23"))
 
 # Plot Info
 td_corr_F <- round(corr.test(df_both_F[df_both_F$diagnosis == "TD", "real_age"], df_both_F[df_both_F$diagnosis == "TD", "pred_age"])$r, digits=3)
@@ -352,12 +314,11 @@ ps_N_F <- nrow(df_both_F[df_both_F$diagnosis == "PS",])
 substring_F <- paste0("TD: r = ", td_corr_F, ", p < ", td_p_F,", N = ", td_N_F, "\nPS: r = ", ps_corr_F, ", p < ", ps_p_F,", N = ", ps_N_F)
 
 
-
 # Plots
 real_pred_F <- ggplot(data=df_both_F, aes(real_age, pred_age, color=diagnosis)) +
 	geom_point(shape = 16, size = 2, show.legend = TRUE, alpha=.4) + theme_minimal() +
 	xlim(0,25) + ylim(0,25) + geom_abline() +
-	labs(title = "Female (El5 Only): Cortical Thickness ROIs", subtitle = substring_F) + 
+	labs(title = "Female (Elastic 5-Fold): Cortical Thickness ROIs", subtitle = substring_F) + 
 	xlab("Real Age") + ylab("Predicted Age") + geom_smooth(se = TRUE, method = "lm") +
 	theme(plot.title = element_text(family="Times", face="bold", size=18)) 
 
@@ -365,13 +326,9 @@ bar_F <- ggplot(data=summary_F, aes(x=Age_Category, y=Percent_Pred_Adult, fill=D
 	geom_bar(stat="identity", position=position_dodge()) +
 	geom_text(aes(label=N), vjust=1.6, color="white", position = position_dodge(0.9), size=2.5) +
 	scale_fill_brewer(palette="Paired") + ylim(c(0,100)) +
-	ggtitle("Female (El5 Only): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
+	ggtitle("Female (Elastic 5-Fold): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
 
-bar_3_F <- ggplot(data=summary_3_F, aes(x=Age_Category, y=Percent_Pred_Adult, fill=Diagnosis)) +
-	geom_bar(stat="identity", position=position_dodge()) +
-	geom_text(aes(label=N), vjust=1.6, color="white", position = position_dodge(0.9), size=2.5) +
-	scale_fill_brewer(palette="Paired") + ylim(c(0,100)) +
-	ggtitle("Female (El5 Only): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
+
 
 
 
@@ -388,12 +345,11 @@ for (i in 1:ncol(df_M)) {
 td_M <- df_M[df_M$psTerminal == "TD",]
 rownames(td_M) <- 1:nrow(td_M)
 
-# TD folds
-folds5_TD <- createFolds(td_M$ageAtScan1, k = 5, list = TRUE)
+folds5 <- createFolds(td_M$ageAtScan1, k = 5, list = TRUE)
 
 for (i in 1:5) {
-	test <- folds5_TD[[i]]
-	trainfolds <- subset(folds5_TD,!(grepl(i, names(folds5_TD))))
+	test <- folds5[[i]]
+	trainfolds <- subset(folds5,!(grepl(i, names(folds5))))
 	train <- c()
 	for (j in 1:4) { train <- c(train, trainfolds[[j]]) }
 	assign(paste0("x_td_train_M_", i), td_M[train, c("bblid", xvars)])
@@ -402,69 +358,47 @@ for (i in 1:5) {
 	assign(paste0("y_td_test_M_", i), td_M[test, c("bblid", yvar)])
 }
 
-# PS folds
-ps_M <- df_M[df_M$psTerminal == "PS",]
-rownames(ps_M) <- 1:nrow(ps_M)
-folds5_PS <- createFolds(ps_M$ageAtScan1, k = 5, list = TRUE)
-
+#####Elastic Net: out of sample predictions for TD's
 for (i in 1:5) {
-	test <- folds5_PS[[i]]
-	trainfolds <- subset(folds5_PS,!(grepl(i, names(folds5_PS))))
-	train <- c()
-	for (j in 1:4) { train <- c(train, trainfolds[[j]]) }
-	assign(paste0("x_ps_train_M_", i), ps_M[train, c("bblid", xvars)])
-	assign(paste0("x_ps_test_M_", i), ps_M[test, c("bblid", xvars)])
-	assign(paste0("y_ps_train_M_", i), ps_M[train, c("bblid", yvar)])
-	assign(paste0("y_ps_test_M_", i), ps_M[test, c("bblid", yvar)])
-}
-
-
-#####Elastic Net: out of sample predictions for TD's, and 1/5 each iteration for PS's
-for (i in 1:5) {
-	x_td_train_df <- get(paste0("x_td_train_M_", i))
-	x_td_train_input <- x_td_train_df[,xvars]
-	y_td_train_df <- get(paste0("y_td_train_M_", i))
-	y_td_train_input <- y_td_train_df$ageAtScan1
-	ageAtScan1 <- y_td_train_input
+	x_train_df <- get(paste0("x_td_train_M_", i))
+	x_train_input <- x_train_df[,xvars]
+	y_train_df <- get(paste0("y_td_train_M_", i))
+	y_train_input <- y_train_df$ageAtScan1
+	ageAtScan1 <- y_train_input
 	train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
-	elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
+	elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_train_input), method = "glmnet", 
 				preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
 				# just used parameters from here: https://www.datacamp.com/community/tutorials/tutorial-ridge-lasso-elastic-net
 	assign(paste0("mod_td_M_", i), elastic_net_model)
-	# td predicted values
-	x_td_test_df <- get(paste0("x_td_test_M_", i))
-	y_td_test_df <- get(paste0("y_td_test_M_", i))
-	y_td_test_predicted <- predict(elastic_net_model, x_td_test_df)
-	# ps predicted values
-	x_ps_test_df <- get(paste0("x_ps_test_M_", i))
-	y_ps_test_df <- get(paste0("y_ps_test_M_", i))
-	y_ps_test_predicted <- predict(elastic_net_model, x_ps_test_df)
-	if (i == 1) { 
-		df_td_M <- merge(cbind(x_td_test_df, y_td_test_predicted), y_td_test_df)
-		df_ps_M <- merge(cbind(x_ps_test_df, y_ps_test_predicted), y_ps_test_df)
-	} else { 
-		df_td_M <- rbind(df_td_M, merge(cbind(x_td_test_df, y_td_test_predicted), y_td_test_df))
-		df_ps_M <- rbind(df_ps_M, merge(cbind(x_ps_test_df, y_ps_test_predicted), y_ps_test_df))
+	x_test_df <- get(paste0("x_td_test_M_", i))
+	y_test_df <- get(paste0("y_td_test_M_", i))
+	y_test_predicted <- predict(elastic_net_model, x_test_df)
+	if (i == 1) { predicted_values <- merge(cbind(x_test_df, y_test_predicted), y_test_df)
+	} else { predicted_values <- rbind(predicted_values, merge(cbind(x_test_df, y_test_predicted), y_test_df))
 	}
 }
+names(predicted_values)[names(predicted_values) == 'y_test_predicted'] <- 'predicted_ageAtScan1'
 
+#####Elastic Net: predictions for PS's 
+# train on full TD set
+x_td_train_input <- td_M[,xvars]
+ageAtScan1 <- td_M[,yvar]
+train_control <- trainControl(method = "repeatedcv", number = 5, repeats = 5, search = "random", verboseIter = TRUE)
+elastic_net_model <- train(ageAtScan1 ~ . , data = cbind(ageAtScan1, x_td_train_input), method = "glmnet", 
+				preProcess = c("center", "scale"), tuneLength = 25, trControl = train_control) 
 
+# predict on PS's
+x_ps_M <- df_M[df_M$psTerminal == "PS", c("bblid", xvars)]
+y_ps_M <- df_M[df_M$psTerminal == "PS", c("bblid", yvar)]
+x_ps_input <- x_ps_M[,xvars]
+y_ps_input <- y_ps_M[,yvar]
+ageAtScan1 <- y_ps_input
+y_ps_predicted <- predict(elastic_net_model, x_ps_input)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-names(df_td_M)[names(df_td_M) == 'y_td_test_predicted'] <- 'predicted_ageAtScan1'
-names(df_ps_M)[names(df_ps_M) == 'y_ps_test_predicted'] <- 'predicted_ageAtScan1'
+# create final dfs
+df_td_M <- predicted_values
+df_ps_M <- merge(x_ps_M, y_ps_M)
+df_ps_M$predicted_ageAtScan1 <- y_ps_predicted
 
 # Create years age variables
 df_ps_M$real_age <- df_ps_M$ageAtScan1/12
@@ -538,50 +472,6 @@ summary_M$N <- c(N_TD_8_9, N_PS_8_9, N_TD_10_11, N_PS_10_11, N_TD_12_13, N_PS_12
 
 summary_M$Age_Category <- factor(summary_M$Age_Category, levels = c("8_9", "10_11", "12_13", "14_15", "16_17", "18_19", "20_23"))
 
-# Three-year age bins
-df_both_M$age_cat_3 <- 0
-
-for (row in 1:nrow(df_both_M)) {
-	if (df_both_M[row,"real_age"] < 12) { df_both_M[row,"age_cat_3"] = "8_11" }
-	else if (df_both_M[row,"real_age"] >= 12 & df_both_M[row,"real_age"] < 15) { df_both_M[row,"age_cat_3"] = "12_14" }
-	else if (df_both_M[row,"real_age"] >= 15 & df_both_M[row,"real_age"] < 18) { df_both_M[row,"age_cat_3"] = "15_17" }
-	else if (df_both_M[row,"real_age"] >= 18 & df_both_M[row,"real_age"] < 21) { df_both_M[row,"age_cat_3"] = "18_20" }
-	else if (df_both_M[row,"real_age"] >= 21 & df_both_M[row,"real_age"] < 24) { df_both_M[row,"age_cat_3"] = "21_23" }
-}
-
-df_both_M$age_cat_3 <- as.factor(df_both_M$age_cat_3)
-summary_3_M <- data.frame(matrix(0, nrow=10, ncol=4))
-colnames(summary_3_M) <- c("Age_Category", "Diagnosis", "Percent_Pred_Adult", "N")
-summary_3_M$Age_Category <- c("8_11", "8_11", "12_14", "12_14", "15_17", "15_17", "18_20", "18_20", "21_23", "21_23")
-summary_3_M$Diagnosis <- c("TD", "PS", "TD", "PS", "TD", "PS", "TD", "PS", "TD", "PS")
-
-TD_8_11 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-PS_8_11 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-TD_12_14 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-PS_12_14 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-TD_15_17 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-PS_15_17 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-TD_18_20 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-PS_18_20 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-TD_21_23 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-PS_21_23 <- 100*(length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"])/length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-summary_3_M$Percent_Pred_Adult <- c(TD_8_11, PS_8_11, TD_12_14, PS_12_14, TD_15_17, PS_15_17, TD_18_20, PS_18_20, TD_21_23, PS_21_23)
-
-N_TD_8_11 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-N_PS_8_11 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "8_11" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-N_TD_12_14 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-N_PS_12_14 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "12_14" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-N_TD_15_17 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-N_PS_15_17 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "15_17" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-N_TD_18_20 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-N_PS_18_20 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "18_20" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-N_TD_21_23 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "TD" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "TD", "age_cat_3"]))
-N_PS_21_23 <- paste0(length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "PS" & df_both_M$pred_adult == 1, "age_cat_3"]),"/",length(df_both_M[df_both_M$age_cat_3 == "21_23" & df_both_M$diagnosis == "PS", "age_cat_3"]))
-summary_3_M$N <- c(N_TD_8_11, N_PS_8_11, N_TD_12_14, N_PS_12_14, N_TD_15_17, N_PS_15_17, N_TD_18_20, N_PS_18_20, N_TD_21_23, N_PS_21_23)
-
-
-summary_3_M$Age_Category <- factor(summary_3_M$Age_Category, levels = c("8_11", "12_14", "15_17", "18_20", "21_23"))
-
 
 # Plot Info
 td_corr_M <- round(corr.test(df_both_M[df_both_M$diagnosis == "TD", "real_age"], df_both_M[df_both_M$diagnosis == "TD", "pred_age"])$r, digits=3)
@@ -600,7 +490,7 @@ substring_M <- paste0("TD: r = ", td_corr_M, ", p < ", td_p_M,", N = ", td_N_M, 
 real_pred_M <- ggplot(data=df_both_M, aes(real_age, pred_age, color=diagnosis)) +
 	geom_point(shape = 16, size = 2, show.legend = TRUE, alpha=.4) + theme_minimal() +
 	xlim(0,25) + ylim(0,25) + geom_abline() +
-	labs(title = "Male (El5 Only): Cortical Thickness ROIs", subtitle = substring_M) + 
+	labs(title = "Male (Elastic 5-Fold): Cortical Thickness ROIs", subtitle = substring_M) + 
 	xlab("Real Age") + ylab("Predicted Age") + geom_smooth(se = TRUE, method = "lm") +
 	theme(plot.title = element_text(family="Times", face="bold", size=18)) 
 
@@ -608,20 +498,13 @@ bar_M <- ggplot(data=summary_M, aes(x=Age_Category, y=Percent_Pred_Adult, fill=D
 	geom_bar(stat="identity", position=position_dodge()) +
 	geom_text(aes(label=N), vjust=1.6, color="white", position = position_dodge(0.9), size=2.5) +
 	scale_fill_brewer(palette="Paired") + ylim(c(0,100)) +
-	ggtitle("Male (El5 Only): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
-
-bar_3_M <- ggplot(data=summary_3_M, aes(x=Age_Category, y=Percent_Pred_Adult, fill=Diagnosis)) +
-	geom_bar(stat="identity", position=position_dodge()) +
-	geom_text(aes(label=N), vjust=1.6, color="white", position = position_dodge(0.9), size=2.5) +
-	scale_fill_brewer(palette="Paired") + ylim(c(0,100)) +
-	ggtitle("Male (El5 Only): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
+	ggtitle("Male (Elastic 5-Fold): Cortical Thickness ROIs") + xlab("Age Category") + ylab("Predicted Adult (%)")
 
 
 # Save plots
-pdf(file="/home/butellyn/age_prediction/plots/cort_fiveFoldTD_ElasticNet.pdf", width=12, height=6)
+pdf(file="/home/butellyn/age_prediction/plots/cort_fiveFoldWholeTD_ElasticNet.pdf", width=12, height=6)
 grid.arrange(real_pred_F, real_pred_M, ncol=2)
 grid.arrange(bar_F, bar_M, ncol=2)
-grid.arrange(bar_3_F, bar_3_M, ncol=2)
 dev.off()
 
 
